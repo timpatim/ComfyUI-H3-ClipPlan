@@ -1,0 +1,15 @@
+[project]
+name = "comfyui-h3-clipplan"
+description = "Plan-driven MiniMax H3 video generation for ComfyUI: one JSON plan, one clip per run, takes, continuations and final assembly."
+version = "3.6.0"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/timpatim/ComfyUI-H3-ClipPlan"
+
+# Only needed to publish on the ComfyUI Registry (registry.comfy.org):
+# [tool.comfy]
+# PublisherId = "votre-id-de-publication"
+# DisplayName = "H3 Clip Plan"
+# Icon = ""

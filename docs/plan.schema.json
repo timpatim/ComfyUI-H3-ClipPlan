@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "h3-clip-plan-v3",
+  "title": "H3 Clip Plan",
+  "description": "A video described as an ordered list of MiniMax H3 clips. Mode 'music_video': the picture is generated against one song that is injected into every clip. Mode 'free': H3 generates picture and sound (dialogue, voices, ambience). Clip start times are NOT stored: they are derived from the clip lengths. Reference images, voices and picture size are chosen in the workflow, not in the plan. See PLAN_SPEC.md.",
+  "type": "object",
+  "required": [
+    "version",
+    "project",
+    "clips"
+  ],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^_": {}
+  },
+  "properties": {
+    "version": {
+      "enum": [
+        3,
+        2,
+        1
+      ],
+      "description": "Use 3. Versions 1 and 2 are still read, always as music_video plans."
+    },
+    "project": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "Short name used for the output folder: output/h3_clip_plan/<project>/."
+    },
+    "mode": {
+      "enum": [
+        "music_video",
+        "free"
+      ],
+      "default": "music_video",
+      "description": "music_video: a song is injected and kept untouched. free: H3 generates the sound of every clip (no song)."
+    },
+    "refs": {
+      "type": "object",
+      "description": "Reference name -> short description of what the user must supply: an image, a voice sample, or both. Images are chosen in 'H3 Plan - Reference' nodes and voices in 'H3 Plan - Voice' nodes carrying the same name.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 64,
+      "multipleOf": 32,
+      "description": "Optional fallback picture size. Normally left out: the size is chosen in the workflow. Give both or neither."
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 64,
+      "multipleOf": 32,
+      "description": "Optional fallback picture size. Normally left out: the size is chosen in the workflow. Give both or neither."
+    },
+    "context_frames": {
+      "type": "integer",
+      "enum": [
+        5,
+        22,
+        39,
+        56,
+        73,
+        90,
+        107,
+        124,
+        141,
+        158,
+        175,
+        192,
+        209,
+        226,
+        243
+      ],
+      "default": 39,
+      "description": "Frames shared between a clip and the end of the previous one. Keep 39. In free mode only 39, 90, 141, 192, 243 are allowed."
+    },
+    "crossfade_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "0 = hard cut between clips. Up to context_frames = linear blend over that many frames at every seam."
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Base seed: clip i uses seed + i unless it has its own."
+    },
+    "ref_image_size": {
+      "enum": [
+        "match",
+        "max"
+      ],
+      "default": "match"
+    },
+    "song": {
+      "type": "object",
+      "description": "music_video only (forbidden in free mode). file is informational; duration_seconds lets a checker verify the plan fits.",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    },
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": [
+          "frames",
+          "prompt"
+        ],
+        "additionalProperties": false,
+        "patternProperties": {
+          "^_": {}
+        },
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+            "description": "Unique label, used in file names."
+          },
+          "frames": {
+            "type": "integer",
+            "minimum": 56,
+            "description": "Raw clip length at 24 fps. Must equal 17k + 5 (56, 73, 90, 107, 124, 141, 158, 175, 192, 209, 226, 243, ...). Includes the context_frames overlap for every clip except the first."
+          },
+          "continue": {
+            "type": "boolean",
+            "default": false,
+            "description": "true = same shot goes on: the clip starts from the last context_frames of the previous clip. false = new scene, generated from scratch. Must be false for clip 1."
+          },
+          "refs": {
+            "type": "array",
+            "maxItems": 12,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+            },
+            "description": "References used by the clip, images and voices alike. In the prompt write {picture:NAME} and {voice:NAME}; the node numbers them. music_video: at most 9. free: at most 12, of which at most 9 images and 3 voices are used."
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Complete MiniMax H3 full-reference prompt with the six sections. Name references with {picture:NAME} and, on a line of its own, {voice:NAME}. Never write <Audio N>."
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lyrics": {
+            "type": "string",
+            "description": "Informational: words newly heard in this clip."
+          },
+          "notes": {
+            "type": "string"
+          },
+          "dialogue": {
+            "type": "array",
+            "description": "free mode: the lines spoken in this clip, for the checker. The prompt holds what H3 actually says.",
+            "items": {
+              "type": "object",
+              "required": [
+                "speaker",
+                "text"
+              ],
+              "additionalProperties": false,
+              "patternProperties": {
+                "^_": {}
+              },
+              "properties": {
+                "speaker": {
+                  "type": "string",
+                  "description": "A name of the clip's refs."
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "language": {
+                  "type": "string",
+                  "description": "For example French."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "audio_feather_ticks": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 64,
+      "default": 8,
+      "description": "free mode only: soft release, in 25 ms steps, at the end of the sound copied from the previous clip."
+    }
+  }
+}

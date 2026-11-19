@@ -1,0 +1,173 @@
+{
+ "version": 2,
+ "project": "music_16clips",
+ "refs": {
+  "singer": "the lead singer, full body",
+  "dancer": "a dancer, full body",
+  "ranger": "a ranger in a long coat",
+  "kid": "a teenager in armour",
+  "giant": "a tall muscular man",
+  "costume": "a black costume with a hood, nobody inside",
+  "wolf": "a giant wolf"
+ },
+ "context_frames": 39,
+ "crossfade_frames": 0,
+ "song": {
+  "file": "song.mp3",
+  "duration_seconds": 99.0
+ },
+ "notes": "Test fixture: timing structure of a 16-clip music video (frames, continuations, references). Prompts are placeholders.",
+ "clips": [
+  {
+   "name": "clip_01",
+   "frames": 209,
+   "continue": false,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 1.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_02",
+   "frames": 158,
+   "continue": true,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 2.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_03",
+   "frames": 243,
+   "continue": true,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 3.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_04",
+   "frames": 243,
+   "continue": false,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 4.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_05",
+   "frames": 158,
+   "continue": true,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 5.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_06",
+   "frames": 141,
+   "continue": true,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 6.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_07",
+   "frames": 158,
+   "continue": false,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 7.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_08",
+   "frames": 175,
+   "continue": false,
+   "refs": [
+    "dancer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the a dancer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 8.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_09",
+   "frames": 175,
+   "continue": false,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 9.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_10",
+   "frames": 141,
+   "continue": false,
+   "refs": [
+    "dancer",
+    "singer",
+    "ranger",
+    "kid",
+    "giant",
+    "costume"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the a dancer, full body from <Picture 1>.\n<Subject 2> is the the lead singer, full body from <Picture 2>.\n<Subject 3> is the a ranger in a long coat from <Picture 3>.\n<Subject 4> is the a teenager in armour from <Picture 4>.\n<Subject 5> is the a tall muscular man from <Picture 5>.\n<Subject 6> is the a black costume with a hood, nobody inside from <Picture 6>.\n\nsummary:\n[reference generation] Test clip 10.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n<Subject 2> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n<Subject 3> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n<Subject 4> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n<Subject 5> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n<Subject 6> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_11",
+   "frames": 158,
+   "continue": false,
+   "refs": [
+    "wolf"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the a giant wolf from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 11.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_12",
+   "frames": 243,
+   "continue": false,
+   "refs": [
+    "singer",
+    "giant",
+    "costume"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n<Subject 2> is the a tall muscular man from <Picture 2>.\n<Subject 3> is the a black costume with a hood, nobody inside from <Picture 3>.\n\nsummary:\n[reference generation] Test clip 12.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n<Subject 2> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n<Subject 3> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_13",
+   "frames": 158,
+   "continue": false,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 13.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_14",
+   "frames": 141,
+   "continue": true,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 14.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_15",
+   "frames": 243,
+   "continue": false,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 15.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  },
+  {
+   "name": "clip_16",
+   "frames": 209,
+   "continue": true,
+   "refs": [
+    "singer"
+   ],
+   "prompt": "subject_definitions:\n<Subject 1> is the the lead singer, full body from <Picture 1>.\n\nsummary:\n[reference generation] Test clip 16.\n\nretention_analysis:\n<Subject 1> (appears throughout [Shot 1]): fully_preserved - keep the reference.\n\ndetailed_description:\nCinematic live-action test scene.\n[Shot 1] <Subject 1> sings to the camera.\n\noverall_soundscape:\nQuiet room tone.\n\nnon_diegetic_music:\nThe current section of the song."
+  }
+ ]
+}
