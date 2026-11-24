@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 6,
  "project": "robot_workshop",
  "mode": "free",
  "notes": "Example plan in free mode: H3 generates picture and sound. Two images (robot, workshop) in examples/; a voice sample named 'robot' is optional.",

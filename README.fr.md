@@ -1,4 +1,4 @@
-# ComfyUI-H3-ClipPlan (v3.6)
+# ComfyUI-H3-ClipPlan (v3.11)
 
 *Version anglaise : [README.md](README.md).*
 
@@ -45,6 +45,67 @@ par programme) et leur chanson (synthétisée), distribuées sous la même licen
    d'exécutions sur le nombre de clips (3 ou 2) et lancer.
 3. Ouvrir `workflows/H3 Clip Plan - 2 Assemble.json` (ou `… Assemble (free).json`) et le lancer
    pour obtenir la vidéo finale.
+
+## Version 3.11 : retour à la vidéo de référence de la 3.9
+
+- La 3.10 mettait les images de la prise précédente au début de la vidéo de référence d'un clip d'édition qui
+  en continue un autre. L'image restait plus nette avec un upscale latent, mais H3 suivait alors le changement
+  qu'il voyait dans la vidéo de référence (une robe rouge au début, celle d'origine ensuite) : l'édition ne
+  tenait plus d'un clip à l'autre. La vidéo de référence est de nouveau la vidéo d'origine sur tout le clip,
+  comme en 3.9. Pour la meilleure qualité en édition, générer sans upscale latent.
+
+## Version 3.10 : des continuations plus nettes dans une vidéo éditée
+
+- Un clip d'édition qui continue le précédent recevait deux images différentes de son recouvrement (les
+  1,6 premières secondes) : le clip précédent, déjà édité, en contexte protégé, et la vidéo d'origine
+  comme `<Video 1>`. H3 tranchait par une image plus douce, dont le clip suivant héritait : l'image perdait
+  en netteté clip après clip (bien plus avec un upscale latent). Le recouvrement de sa vidéo de référence
+  montre maintenant les images de la prise précédente, pour que les deux disent la même chose. Elles
+  viennent de l'aperçu vidéo de la prise (ou, sans aperçu, de son latent décodé). Les prises faites avant
+  sont périmées.
+
+## Version 3.9 : consigne d'édition commune, continuer après le segment édité
+
+- Les plans passent en `"version": 6`. Les versions 1 à 5 sont toujours lues.
+- `edit_video` reçoit `"instruction"` : l'édition commune aux clips, écrite une fois. Elle remplace
+  `{edit}` dans les prompts ; les images qu'elle cite (`{picture:NOM}`) sont ajoutées aux références des
+  clips qui utilisent `{edit}`.
+- Les clips qui finissent après la fin du segment ne sont plus une erreur : ils continuent la vidéo (pas
+  de `<Video 1>`, pas de morceau de vidéo). Avec `"sound": "original"`, la vidéo finale garde le son
+  d'origine sur la partie éditée seulement.
+
+## Version 3.8 : éditer une vidéo existante
+
+- Les plans passent en `"version": 5`. Les versions 1 à 4 sont toujours lues.
+- Nouvelle clé `edit_video` (mode `free`) : un segment d'un fichier vidéo, donné par le nœud
+  **H3 Plan - Video**, est édité. La frise du plan est le segment ; chaque clip reçoit son propre
+  morceau comme `<Video 1>` (la vidéo de référence de H3, par « MiniMax H3 Reference to Video »), avec
+  son son, que H3 numérote `<Audio 1>` : les voix sont numérotées à partir de `<Audio 2>`
+  automatiquement. Le prompt dit ce qui change (style, personnage remplacé par une image de
+  référence…).
+- `"sound"` : la vidéo finale garde le son d'origine du segment (`"original"`, par défaut) ou le son
+  fait par H3 (`"h3"`). Pour le son d'origine, « H3 Plan - Assemble Final Video » a besoin de son
+  entrée `references` (le nœud vidéo).
+- Un clip qui édite une vidéo dure de 2 à 15 s. `start_video` et `edit_video` ne vont pas ensemble.
+- Changer le segment ou le fichier vidéo rend toutes les prises périmées.
+
+## Version 3.7 : continuer une vidéo existante
+
+- Les plans passent en `"version": 4`. Les versions 1 à 3 sont toujours lues.
+- Nouvelle clé `start_video` : le clip 1 continue (`"continue": true`) ou coupe depuis un segment
+  d'un fichier vidéo, donné par un nouveau nœud **H3 Plan - Video** du même nom. Seul le segment est
+  lu (ffmpeg, celui apporté par ComfyUI-VideoHelperSuite), à 24 images/s, agrandi pour couvrir la
+  taille d'image et rogné au centre. Le segment est aimanté sur la grille des images : il garde sa
+  fin, son début avance de moins de 0,7 s.
+- `"in_assembly"` : le segment ouvre la vidéo finale, ou ne sert que de tremplin (la vidéo commence
+  alors là où commence le clip 1).
+- Mode `music_video`, `"song"` : `"with_video"` (par défaut) la chanson commence avec le segment,
+  qui perd son propre son ; `"after_video"` le segment garde son son et la chanson commence avec le
+  clip 1.
+- « H3 Plan - Assemble Final Video » a de nouvelles entrées facultatives `references`, `width`,
+  `height` pour le segment ; il lui faut aussi `audio_vae` quand le segment est dans la vidéo.
+- Changer le segment ou le fichier vidéo rend périmées les prises du clip 1 (et celles qui les
+  continuent).
 
 ## Version 3.6 : appli intégrée retirée
 
@@ -166,7 +227,7 @@ Avec git (recommandé) :
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/timpatim/ComfyUI-H3-ClipPlan.git
+git clone https://github.com/VOTRE-COMPTE/ComfyUI-H3-ClipPlan.git
 # mise à jour plus tard :
 cd ComfyUI-H3-ClipPlan
 git pull
@@ -260,9 +321,10 @@ python plan_tool.py frames                longueurs de clip autorisées
 |---|---|---|
 | **H3 Plan - Reference** | `name`, `image` (liste, envoi, glisser-déposer), `references` facultatif | `references` |
 | **H3 Plan - Voice** | `name`, `voice_file` (liste, bouton `choose audio file`, glisser-déposer), `references` facultatif | `references` |
+| **H3 Plan - Video** | `name`, `video_file` (liste des vidéos de `ComfyUI/input`), `references` facultatif | `references` |
 | **H3 Plan - Clip** | `clip`, `vae`, `audio_vae`, `plan_file`, `clip_index`, `seed_mode`, et en option `master_audio` (obligatoire en `music_video`), `references`, `width`, `height` | `positive`, `latent`, `clip_audio` (silence en `free`), `seed`, `filename_prefix`, `plan_clip`, `info` |
 | **H3 Plan - Save Clip Latent** | `latent` (sortie de l'échantillonneur), `plan_clip`, `delete_stale`, `audio_vae` facultatif | `latent`, `audio` (son généré, si `audio_vae` est relié), `report` |
-| **H3 Plan - Assemble Final Video** | `video_vae`, `plan_file`, `last_clip`, `crf`, et `master_audio` (`music_video`) ou `audio_vae` (`free`) | fichiers vidéo, `report` |
+| **H3 Plan - Assemble Final Video** | `video_vae`, `plan_file`, `last_clip`, `crf`, et `master_audio` (`music_video`) ou `audio_vae` (`free`) ; avec une vidéo de départ dans la vidéo finale : `references`, `width`, `height` et `audio_vae` | fichiers vidéo, `report` |
 | **H3 Plan - Takes** | `plan_file` | liste des prises, aperçu vidéo, choix et ménage (dans le nœud) |
 | **H3 Plan - Timeline** | `plan_file` | tableau des temps, noms des références attendues, état des clips |
 
@@ -299,7 +361,7 @@ BasicScheduler) et le choix de l'échantillonneur restent ceux du workflow d'ori
   appuyer sur R pour rafraîchir la liste.
 - 64 clips au maximum, limite du nœud d'assemblage.
 - `crossfade_frames` s'applique à tous les raccords : coupes franches partout ou fondus partout.
-- Le premier clip du plan commence toujours au début de la chanson.
+- Sans `start_video`, le premier clip du plan commence toujours au début de la chanson.
 - Mode `free` : une nouvelle scène après une coupe perd aussi ses 39 premières images (amorce
   cachée), comme en mode `music_video`. C'est du calcul en plus, mais cela garde un seul
   assembleur pour les deux modes.

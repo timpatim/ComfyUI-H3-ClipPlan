@@ -16,11 +16,14 @@
   "properties": {
     "version": {
       "enum": [
+        6,
+        5,
+        4,
         3,
         2,
         1
       ],
-      "description": "Use 3. Versions 1 and 2 are still read, always as music_video plans."
+      "description": "Use 6. Versions 3 to 5 are still read; versions 1 and 2 are read as music_video plans."
     },
     "project": {
       "type": "string",
@@ -141,7 +144,7 @@
           "continue": {
             "type": "boolean",
             "default": false,
-            "description": "true = same shot goes on: the clip starts from the last context_frames of the previous clip. false = new scene, generated from scratch. Must be false for clip 1."
+            "description": "true = same shot goes on: the clip starts from the last context_frames of the previous clip. false = new scene, generated from scratch. Must be false for clip 1, unless the plan has a 'start_video'."
           },
           "refs": {
             "type": "array",
@@ -207,6 +210,89 @@
       "maximum": 64,
       "default": 8,
       "description": "free mode only: soft release, in 25 ms steps, at the end of the sound copied from the previous clip."
+    },
+    "start_video": {
+      "type": "object",
+      "description": "Clip 1 continues (or cuts from) a segment of an existing video, given by an 'H3 Plan - Video' node with the same name. See PLAN_SPEC.md section 5.1.",
+      "required": [
+        "ref",
+        "end"
+      ],
+      "additionalProperties": false,
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+          "description": "Reference name of the video, declared in 'refs'."
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Start of the segment, in seconds of the file (moved forward onto the frame grid)."
+        },
+        "end": {
+          "type": "number",
+          "description": "End of the segment, in seconds of the file."
+        },
+        "in_assembly": {
+          "type": "boolean",
+          "default": true,
+          "description": "true: the segment opens the final video. false: it is only a springboard."
+        },
+        "song": {
+          "enum": [
+            "with_video",
+            "after_video"
+          ],
+          "default": "with_video",
+          "description": "music_video mode: the song starts with the segment, or after it (the segment keeps its own sound)."
+        }
+      }
+    },
+    "edit_video": {
+      "type": "object",
+      "description": "free mode: the clips that end within a segment of an existing video edit their slice of it (<Video 1> in their prompt); the next ones continue the video. Given by an 'H3 Plan - Video' node with the same name. Not with start_video. See PLAN_SPEC.md section 5.2.",
+      "required": [
+        "ref",
+        "end"
+      ],
+      "additionalProperties": false,
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+          "description": "Reference name of the video, declared in 'refs'."
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0,
+          "description": "Start of the edited segment, in seconds of the file."
+        },
+        "end": {
+          "type": "number",
+          "description": "End of the edited segment, in seconds of the file. The clips that end before it edit the video; the next ones continue it."
+        },
+        "sound": {
+          "enum": [
+            "original",
+            "h3"
+          ],
+          "default": "original",
+          "description": "Sound of the final video: the original sound of the segment, or the sound H3 made."
+        },
+        "instruction": {
+          "type": "string",
+          "description": "The edit common to the clips: replaces {edit} in their prompts; the pictures it names ({picture:NAME}) are added to the references of those clips."
+        }
+      }
     }
   }
 }

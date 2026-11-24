@@ -1,4 +1,4 @@
-# H3 Clip Plan — file format specification (version 3)
+# H3 Clip Plan — file format specification (version 6)
 
 This document is written for both people and language models. It defines the JSON file that
 drives the H3 Clip Plan nodes for ComfyUI. A machine-readable version is in
@@ -38,7 +38,7 @@ chosen in the workflow.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `version` | integer | yes | | `3`. (Versions 1 and 2 are still read, always as `music_video`.) |
+| `version` | integer | yes | | `6`. (Versions 3 to 5 are still read; versions 1 and 2 are read as `music_video`.) |
 | `project` | string | yes | | Short name (letters, digits, `_`, `-`). Output goes to `output/h3_clip_plan/<project>/`. |
 | `mode` | `"music_video"` or `"free"` | no | `"music_video"` | See section 1. |
 | `clips` | array | yes | | 1 to 64 clip objects, in playing order (section 3). |
@@ -50,6 +50,8 @@ chosen in the workflow.
 | `seed` | integer | no | | Base seed. Clip *i* uses `seed + i`. Without it, each clip gets a stable seed derived from the project name. |
 | `ref_image_size` | `"match"` or `"max"` | no | `"match"` | Passed to the H3 reference encoder. |
 | `song` | object | `music_video` only | | `file` (string, informational) and `duration_seconds` (number, lets a checker verify that the plan fits in the song). Forbidden in `free` mode. |
+| `start_video` | object | no | | Clip 1 continues (or cuts from) a segment of an existing video: section 5.1. |
+| `edit_video` | object | no | | `free` mode: every clip edits its slice of a segment of an existing video: section 5.2. Not with `start_video`. |
 | `notes` | string | no | | Free text, ignored. |
 
 Keys starting with `_` are ignored everywhere and can hold comments. Any other unknown key
@@ -135,6 +137,57 @@ move) when the next clip continues them, and let the last clip of a scene resolv
 In `free` mode, **do not end a clip in the middle of a word**: end each clip with a short silence
 (about half a second). The next `continue` clip hears the end of the previous one and goes on from
 there; it must not repeat lines that were already said.
+
+### 5.1 Starting from an existing video: `start_video`
+
+```json
+"start_video": {"ref": "intro", "start": 3.0, "end": 11.0, "in_assembly": true, "song": "with_video"}
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `ref` | string | | Reference name of the video, declared in `refs`. The file is given by an « H3 Plan - Video » node with that name. |
+| `start`, `end` | number (seconds of the file) | `start`: 0 | The segment used. Its length is snapped to the frame grid (17k + 5 frames at 24 fps): `end` is kept, `start` moves forward by less than 0.71 s. It must last more than `context_frames`. |
+| `in_assembly` | boolean | `true` | `true`: the segment opens the final video. `false`: it is only a springboard; the final video starts where clip 1 starts (its first frames are the end of the segment, regenerated). |
+| `song` | `"with_video"` or `"after_video"` | `"with_video"` | `music_video` mode, segment in the video. `with_video`: the song starts with the segment (the segment loses its own sound), so clip 1 starts later in the song. `after_video`: the segment keeps its own sound and the song starts when clip 1 shows. |
+
+With `start_video`, clip 1 may have `"continue": true`: it starts from the last 39 frames of the
+segment (picture, and sound in `free` mode). With `"continue": false` the segment is followed by a
+cut. On the timeline the segment takes frames 0 to its length; every clip comes after it.
+
+### 5.2 Editing an existing video: `edit_video`
+
+```json
+"edit_video": {"ref": "source", "start": 12.0, "end": 40.0, "sound": "original",
+               "instruction": "the footage becomes a hand-drawn cartoon; the man is replaced by {picture:homme}"}
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `ref` | string | | Reference name of the video, declared in `refs`. The file is given by an « H3 Plan - Video » node with that name. |
+| `start`, `end` | number (seconds of the file) | `start`: 0 | The edited segment. The timeline of the plan starts with the segment: frame 0 of the timeline is `start`. The clips that end before `end` edit the video; the next ones continue it (see below). |
+| `instruction` | string | | The edit common to the clips. It replaces `{edit}` in their prompts; the pictures it names (`{picture:NAME}`) are added at the end of the references of each clip that uses `{edit}`. |
+| `sound` | `"original"` or `"h3"` | `"original"` | Sound of the final video: the original sound of the segment (untouched), or the sound H3 made (to change a voice or a line). |
+
+`free` mode only, and not together with `start_video`. Each clip gets the frames of the file under
+its own span of the timeline (from `start` + its raw start, `frames` frames, resized to cover the
+picture size and cropped in the middle) as **`<Video 1>`**, with the sound of that span as its
+soundtrack, which H3 numbers `<Audio 1>`: the `{voice:NAME}` placeholders are then numbered from
+`<Audio 2>`. A clip that edits a video lasts 2 to 15 s (48 to 360 frames), the length H3 takes for a
+reference video. A `continue` clip still starts from the end of the previous (edited) clip; a new
+scene is best put where the video itself changes shot. The prompt only says what changes, for
+example: *An edit of `<Video 1>`: the whole footage becomes a hand-drawn cartoon; framing, motion
+and timing as in `<Video 1>`.*
+
+**The common instruction.** When most clips get the same edit, write it once in `instruction` and put
+`{edit}` in the prompts: *An edit of `<Video 1>`: {edit}.* A clip can complete it (`{edit}; the man
+also wears a red scarf`) or replace it (no `{edit}` in its prompt). Changing the instruction changes
+the clips that use it (their takes are stale).
+
+**After the segment.** The clips that end after `end` do not edit the video: they continue it, from the
+last edited clip, like any clip (no `<Video 1>` in their prompt: it is an error). In the final video
+the original sound (`"sound": "original"`) is kept over the edited part only; the clips after it keep
+their own sound.
 
 ## 6. Prompt rules
 
@@ -223,7 +276,7 @@ picture, H3 rushes or cuts lines; the checker warns. Leave room for reactions an
 
 A plan is valid when all of these hold:
 
-1. It is one JSON object with `version` 1, 2 or 3 and a legal `project`; `mode: "free"` needs version 3.
+1. It is one JSON object with `version` 1 to 5 and a legal `project`; `mode: "free"` needs version 3 or more.
 2. `width` and `height`, when present, are both given and are multiples of 32.
 3. Every `frames` is `17k + 5` and greater than `context_frames`; in `free` mode `context_frames`
    is 39, 90, 141, 192 or 243.
@@ -246,7 +299,7 @@ its timing table.
 
 ```json
 {
-  "version": 3,
+  "version": 6,
   "project": "demo",
   "mode": "music_video",
   "refs": {
@@ -282,7 +335,7 @@ Timing: clip 1 covers 0 → 8.708 s. Clip 2 has `raw_start` 170 frames (7.083 s)
 
 ```json
 {
-  "version": 3,
+  "version": 6,
   "project": "kitchen",
   "mode": "free",
   "refs": {

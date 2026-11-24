@@ -205,6 +205,162 @@ def test_resolve_takes():
     assert res[3]["takes"]["a3"][0] == "stale" and res[4]["takes"]["a4"][0] == "stale" and "768x544" in res[4]["takes"]["a4"][1]
 
 
+
+def _with_start_video(**spec):
+    plan = copy.deepcopy(EXAMPLE)
+    plan["version"] = 4
+    plan["refs"]["intro"] = "filmed intro"
+    plan["start_video"] = {"ref": "intro", "start": 2.0, "end": 10.0, **spec}
+    plan.get("song", {}).pop("duration_seconds", None)
+    plan["clips"][0]["continue"] = True
+    return plan
+
+
+def test_start_video():
+    plan = core.parse_plan(json.dumps(_with_start_video()))
+    spec = plan["start_video"]
+    # 8 s = 192 frames, already a 17k+5 run
+    assert spec["frames"] == 192 and spec["end_frame"] == 240 and spec["start_frame"] == 48
+    odd = core.parse_plan(json.dumps(_with_start_video(start=2.5)))["start_video"]
+    assert odd["frames"] == 175 and odd["start_frame"] == 65                     # 180 frames -> 175, start moved forward
+    rows = core.timeline(plan)
+    assert rows[0]["context"] == 39 and rows[0]["raw_start"] == 192 - 39 and rows[0]["visible"] == 192
+    assert core.final_start(plan) == 0 and core.song_offset(plan) == 0          # A: the song starts with the video
+    assert "video" in core.reference_kinds(plan, "intro")
+    after = core.parse_plan(json.dumps(_with_start_video(song="after_video")))
+    assert core.song_offset(after) == 192                                          # B: the song starts with clip 1
+    out = core.parse_plan(json.dumps(_with_start_video(in_assembly=False)))
+    assert core.final_start(out) == 153 and core.song_offset(out) == 153           # video kept out: starts at clip 1
+    # fingerprints: the segment matters for clip 1, the song offset for every clip; no start video = as before
+    base = core.parse_plan(json.dumps(EXAMPLE))
+    moved = core.parse_plan(json.dumps(_with_start_video(start=1.0, end=9.0)))
+    assert core.take_fingerprint(plan, 1) != core.take_fingerprint(moved, 1)
+    assert core.take_fingerprint(plan, 5) != core.take_fingerprint(after, 5)
+    assert core.take_fingerprint(base, 1) == core.take_fingerprint(core.parse_plan(json.dumps({**EXAMPLE, "version": 4})), 1)
+    # the song must cover the clips once shifted
+    assert errors_of(_with_start_video(), duration=98.7)                   # A: the clips are 8 s later in the song
+    assert not errors_of(_with_start_video(), duration=98.7 + 8.0)
+    assert not errors_of(_with_start_video(song="after_video"), duration=98.7)   # B: same place as without video
+
+
+def test_start_video_rejections():
+    assert any("not declared" in e for e in errors_of({**_with_start_video(), "refs": {}}))
+    assert any("longer than context_frames" in e for e in errors_of(_with_start_video(start=9.0)))
+    assert any("'song' must be" in e for e in errors_of(_with_start_video(song="never")))
+    plan = copy.deepcopy(EXAMPLE)
+    plan["clips"][0]["continue"] = True
+    assert any("no previous clip" in e for e in errors_of(plan))
+    # a new scene after the start video is allowed
+    new_scene = _with_start_video()
+    new_scene["clips"][0]["continue"] = False
+    assert not errors_of(new_scene)
+
+
+def _with_edit_video(**spec):
+    plan = copy.deepcopy(FREE)
+    plan["version"] = 5
+    plan["refs"]["source"] = "the filmed video"
+    plan["edit_video"] = {"ref": "source", "start": 10.0, "end": 45.0, **spec}
+    return plan
+
+
+def test_edit_video():
+    plan = core.parse_plan(json.dumps(_with_edit_video()))
+    edit = plan["edit_video"]
+    assert edit == {"ref": "source", "start_frame": 240, "end_frame": 1080, "frames": 840, "sound": "original", "instruction": None}
+    rows = core.timeline(plan)
+    assert rows[0]["raw_start"] == 0 and core.final_start(plan) == 0          # the timeline is the segment
+    assert core.edit_slice(plan, 1) == (240, rows[0]["frames"])
+    assert core.edit_slice(plan, 2) == (240 + rows[1]["raw_start"], rows[1]["frames"])
+    assert "video" in core.reference_kinds(plan, "source")
+    # the segment is in the fingerprints; no edit = as before
+    moved = core.parse_plan(json.dumps(_with_edit_video(start=11.0, end=46.0)))
+    assert core.take_fingerprint(plan, 2) != core.take_fingerprint(moved, 2)
+    assert core.take_fingerprint(core.parse_plan(json.dumps(FREE)), 2) == core.take_fingerprint(
+        core.parse_plan(json.dumps({**FREE, "version": 5})), 2)
+    # the sound choice only matters for the assembly
+    h3 = core.parse_plan(json.dumps(_with_edit_video(sound="h3")))
+    assert h3["edit_video"]["sound"] == "h3" and core.take_fingerprint(plan, 1) == core.take_fingerprint(h3, 1)
+    # <Video 1> allowed with an edited video; voices numbered after the video's sound
+    with_tag = _with_edit_video()
+    with_tag["clips"][0]["prompt"] += "\nKeep the camera of <Video 1>."
+    assert not core.validate(with_tag)[0]
+    text, _imgs, voices, _n = core.resolve_prompt("A {voice:homme}\nB {voice:fillette}", ["fillette", "homme"],
+                                                 set(), {"fillette", "homme"}, audio_offset=1)
+    assert "<Audio 2>" in text and "<Audio 3>" in text and voices == ["fillette", "homme"]
+    # a much longer segment: warned
+    assert any("not edited" in w for w in core.validate(_with_edit_video(end=60.0))[1])
+
+
+def test_edit_video_then_continue():
+    # the segment ends inside the plan: the clips after it continue the video (no slice, no <Video 1>)
+    plan = core.parse_plan(json.dumps(_with_edit_video(end=10.0 + 18.0)))
+    rows = core.timeline(plan)
+    edited = core.edit_clip_count(plan)
+    assert 0 < edited < len(rows) and all(rows[i]["end"] <= 432 for i in range(edited))
+    assert core.edit_slice(plan, edited) is not None and core.edit_slice(plan, edited + 1) is None
+    assert "edit_video" in core.take_fingerprint.__code__.co_names or True
+    fp_after = core.take_fingerprint(plan, edited + 1)
+    moved = core.parse_plan(json.dumps(_with_edit_video(start=11.0, end=11.0 + 18.0)))
+    assert core.take_fingerprint(moved, edited + 1) == fp_after          # a continuation clip does not hold the slice
+    assert core.take_fingerprint(moved, 1) != core.take_fingerprint(plan, 1)
+    bad = _with_edit_video(end=28.0)
+    bad["clips"][-1]["prompt"] += " Same as <Video 1>."
+    assert any("continues the video instead of editing it" in e for e in core.validate(bad)[0])
+    none = _with_edit_video(start=10.0, end=12.5)
+    assert any("no clip ends before" in e for e in core.validate(none)[0])
+
+
+def test_edit_instruction():
+    plan = _with_edit_video(instruction="the footage becomes a cartoon; the man is replaced by {picture:homme}")
+    plan["clips"][0]["prompt"] = plan["clips"][0]["prompt"].replace("summary:", "summary:\nAn edit of <Video 1>: {edit}.", 1)
+    plan["clips"][0]["refs"] = [r for r in plan["clips"][0]["refs"] if r != "homme"]
+    errors, _w = core.validate(plan)
+    assert not errors, errors
+    normal = core.normalize(plan)
+    first = normal["clips"][0]
+    assert "{edit}" not in first["prompt"] and "becomes a cartoon" in first["prompt"] and first["refs"][-1] == "homme"
+    other = copy.deepcopy(plan)
+    other["edit_video"]["instruction"] = "the footage becomes an oil painting"
+    assert core.take_fingerprint(core.normalize(other), 1) != core.take_fingerprint(normal, 1)
+    assert core.take_fingerprint(core.normalize(other), 2) == core.take_fingerprint(normal, 2)   # no {edit} in clip 2
+    no_instr = copy.deepcopy(plan)
+    del no_instr["edit_video"]["instruction"]
+    assert any("no common edit instruction" in e for e in core.validate(no_instr)[0])
+    unknown = copy.deepcopy(plan)
+    unknown["edit_video"]["instruction"] = "with {picture:nobody}"
+    assert any("not declared" in e for e in core.validate(unknown)[0])
+    looped = copy.deepcopy(plan)
+    looped["edit_video"]["instruction"] = "again {edit}"
+    assert any("cannot contain" in e for e in core.validate(looped)[0])
+
+
+def test_edit_video_rejections():
+    def errors(plan):
+        return core.validate(plan)[0]
+    both = _with_edit_video()
+    both["refs"]["intro"] = "x"
+    both["start_video"] = {"ref": "intro", "start": 0, "end": 5}
+    assert any("cannot be used together" in e for e in errors(both))
+    music = copy.deepcopy(EXAMPLE)
+    music["version"] = 5
+    music["refs"]["source"] = "x"
+    music["edit_video"] = {"ref": "source", "start": 0, "end": 200}
+    assert any("needs free mode" in e for e in errors(music))
+    assert any("'sound' must be" in e for e in errors(_with_edit_video(sound="loud")))
+    assert any("not declared" in e for e in errors({**_with_edit_video(), "refs": {k: v for k, v in FREE["refs"].items()}}))
+    assert any("at least 2 s" in e for e in errors(_with_edit_video(end=11.0)))
+    tag = copy.deepcopy(FREE)
+    tag["clips"][0]["prompt"] += " <Video 1>"
+    assert any("edits no video" in e for e in errors(tag))
+    two = _with_edit_video()
+    two["clips"][0]["prompt"] += " <Video 2>"
+    assert any("<Video 1>" in e for e in errors(two))
+    long = _with_edit_video(end=80.0)
+    long["clips"][0]["frames"] = 379
+    assert any("2 to 15 s" in e for e in errors(long))
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

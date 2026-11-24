@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 6,
  "project": "robot_beach",
  "mode": "music_video",
  "notes": "Example plan: a 20-second instrumental music video. Two images (robot, beach) and the song robot_beach_song.mp3, all in examples/.",

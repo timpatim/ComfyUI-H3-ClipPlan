@@ -87,7 +87,7 @@ lead-in of a new scene. A clip never ends in the middle of a word.
 
 ```json
 {
-  "version": 3,
+  "version": 6,
   "project": "short_name",
   "mode": "free",
   "refs": { "name": "what the user must supply: image, voice or both, and what it shows" },

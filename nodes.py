@@ -16,6 +16,8 @@ import json
 import logging
 import os
 import random
+import shutil
+import subprocess
 import time
 import uuid
 
@@ -208,6 +210,8 @@ def _digest(value) -> str:
 NO_PLAN = "(no .json plan in ComfyUI/input - use the button below)"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus")
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
+NO_VIDEO = "(no video file in input)"
 _SKIP_DIRS = {"3d", "clipspace", "pasted"}
 
 
@@ -317,19 +321,19 @@ def _decode_audio(audio_vae, audio_latent):
 
 
 def _bank_entry(bank, name):
-    """{'image': tensor or None, 'voice': audio or None} for a reference name."""
+    """{'image': tensor or None, 'voice': audio or None, 'video': {'path', 'digest'} or None} for a reference name."""
     value = (bank or {}).get(name)
     if value is None:
-        return {"image": None, "voice": None}
-    if isinstance(value, dict) and ("image" in value or "voice" in value):
-        return {"image": value.get("image"), "voice": value.get("voice")}
-    return {"image": value, "voice": None}   # plain tensor from an older reference node
+        return {"image": None, "voice": None, "video": None}
+    if isinstance(value, dict) and ("image" in value or "voice" in value or "video" in value):
+        return {"image": value.get("image"), "voice": value.get("voice"), "video": value.get("video")}
+    return {"image": value, "voice": None, "video": None}   # plain tensor from an older reference node
 
 
 def _add_to_bank(references, name, kind, value, node_title):
     label = str(name).strip()
     bank = {key: _bank_entry(references, key) for key in (references or {})}
-    entry = bank.get(label, {"image": None, "voice": None})
+    entry = bank.get(label, {"image": None, "voice": None, "video": None})
     if entry[kind] is not None:
         raise ValueError(f"H3 Clip Plan: two '{node_title}' nodes use the name '{label}'")
     entry[kind] = value
@@ -362,7 +366,8 @@ def _mtime(path: str) -> float:
         return 0.0
 
 
-def _encode(clip, vae, audio_vae, prompt, width, height, frames, images, ref_image_size, voices=None):
+def _encode(clip, vae, audio_vae, prompt, width, height, frames, images, ref_image_size, voices=None,
+            ref_video=None, ref_video_audio=None):
     try:
         from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo as r2v
     except Exception:  # noqa: BLE001 - fall back to the registry on any import problem
@@ -372,9 +377,144 @@ def _encode(clip, vae, audio_vae, prompt, width, height, frames, images, ref_ima
         clip=clip, vae=vae, audio_vae=audio_vae, prompt=prompt,
         width=int(width), height=int(height), length=int(frames),
         ref_image_size=ref_image_size, ref_images=refs, ref_audios=voices or None,
+        ref_videos={"ref_video_1": ref_video} if ref_video is not None else None,
+        ref_video_audios={"ref_video_audio_1": ref_video_audio} if ref_video is not None and ref_video_audio is not None else None,
     )
     result = getattr(output, "result", output)
     return result[0], result[1]
+
+
+# ---- videos: read with ffmpeg (the one of VideoHelperSuite's imageio-ffmpeg, or on the PATH), one segment at a time
+def _ffmpeg() -> str:
+    path = os.environ.get("H3_FFMPEG", "").strip()
+    if path:
+        return path
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+        return get_ffmpeg_exe()
+    except Exception:  # noqa: BLE001 - imageio-ffmpeg missing or without a binary
+        pass
+    path = shutil.which("ffmpeg")
+    if not path:
+        raise RuntimeError("H3 Clip Plan: ffmpeg not found; install ComfyUI-VideoHelperSuite (it brings imageio-ffmpeg) "
+                           "or put ffmpeg on the PATH")
+    return path
+
+
+def _file_digest(path: str) -> str:
+    sha = hashlib.sha1()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            sha.update(block)
+    return sha.hexdigest()[:16]
+
+
+def _read_video_frames(path: str, start_frame: int, frames: int, width: int, height: int) -> torch.Tensor:
+    """``frames`` pictures of a video file from ``start_frame`` (24 fps timeline of the file), resized to cover
+    width x height and cropped in the middle. Returns an IMAGE batch [frames, height, width, 3]."""
+    command = [
+        _ffmpeg(), "-v", "error", "-ss", f"{start_frame / core.FPS:.6f}", "-i", path, "-an",
+        "-vf", f"fps={core.FPS},scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+               f"crop={width}:{height}",
+        "-frames:v", str(int(frames)), "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ]
+    done = subprocess.run(command, capture_output=True, check=False)
+    if done.returncode != 0:
+        raise RuntimeError(f"H3 Clip Plan: cannot read the video {os.path.basename(path)}: "
+                           f"{done.stderr.decode('utf-8', 'replace').strip()[-400:]}")
+    size = width * height * 3
+    got = len(done.stdout) // size
+    if got < frames:
+        raise ValueError(
+            f"H3 Clip Plan: the video {os.path.basename(path)} has only {got} frames from "
+            f"{start_frame / core.FPS:.3f} s, {frames} are needed; it ends before the segment of the plan"
+        )
+    array = np.frombuffer(done.stdout[:frames * size], dtype=np.uint8).reshape(frames, height, width, 3)
+    return torch.from_numpy(array.astype(np.float32) / 255.0)
+
+
+def _read_video_audio(path: str, start_frame: int, frames: int, rate: int):
+    """Stereo sound of a video file over the same span, at ``rate``; silence when the file has no sound."""
+    want = int(round(frames / core.FPS * rate))
+    command = [
+        _ffmpeg(), "-v", "error", "-ss", f"{start_frame / core.FPS:.6f}", "-t", f"{frames / core.FPS:.6f}",
+        "-i", path, "-vn", "-ac", "2", "-ar", str(int(rate)), "-f", "f32le", "-",
+    ]
+    done = subprocess.run(command, capture_output=True, check=False)
+    if done.returncode != 0 or not done.stdout:
+        waveform = torch.zeros((1, 2, want))
+    else:
+        samples = np.frombuffer(done.stdout, dtype=np.float32)
+        samples = samples[: len(samples) // 2 * 2].reshape(-1, 2).T.copy()
+        waveform = _fit_length(torch.from_numpy(samples)[None], want)
+    return {"waveform": waveform, "sample_rate": int(rate)}
+
+
+def _video_has_sound(path: str) -> bool:
+    done = subprocess.run([_ffmpeg(), "-hide_banner", "-i", path], capture_output=True, check=False)
+    return b"Audio:" in done.stderr
+
+
+def _edit_video_file(plan, bank):
+    spec = plan["edit_video"]
+    item = _bank_entry(bank, spec["ref"])["video"]
+    if item is None:
+        raise ValueError(
+            f"H3 Clip Plan: the plan edits the video '{spec['ref']}'; give it with an 'H3 Plan - Video' node "
+            f"named '{spec['ref']}'"
+        )
+    return item
+
+
+def _encode_av(vae, audio_vae, images, audio):
+    """H3 audio+video latent of a piece of real video, as if H3 had generated it (17k + 5 frames)."""
+    frames = int(images.shape[0])
+    video = vae.encode(images[:, :, :, :3])
+    vae_sr = int(getattr(audio_vae, "audio_sample_rate", 32000))
+    waveform = _resample(_stereo(audio["waveform"]), audio["sample_rate"], vae_sr)
+    waveform = _fit_length(waveform, int(round(frames / core.FPS * vae_sr)))
+    sound = audio_vae.encode(waveform[:1].movedim(1, -1))
+    steps = int(round(frames / core.FPS * core.AUDIO_HZ))
+    if sound.shape[-1] > steps:
+        sound = sound[..., :steps]
+    elif sound.shape[-1] < steps:
+        sound = torch.nn.functional.pad(sound, (0, steps - sound.shape[-1]))
+    return {"samples": [video.to(torch.float32), sound.to(torch.float32)]}
+
+
+def _start_video_file(plan, bank):
+    spec = plan["start_video"]
+    item = _bank_entry(bank, spec["ref"])["video"]
+    if item is None:
+        raise ValueError(
+            f"H3 Clip Plan: the plan starts from the video '{spec['ref']}'; give it with an 'H3 Plan - Video' node "
+            f"named '{spec['ref']}'"
+        )
+    return item
+
+
+START_CONTEXT_SOURCE = 90   # frames of the start video encoded to continue it (17k + 5, on the audio grid)
+
+
+def _start_video_source(plan, bank, vae, audio_vae, width, height):
+    """Latent of the end of the start video segment, for clip 1 to continue it."""
+    spec = plan["start_video"]
+    item = _start_video_file(plan, bank)
+    frames = min(spec["frames"], START_CONTEXT_SOURCE)
+    first = spec["end_frame"] - frames
+    images = _read_video_frames(item["path"], first, frames, width, height)
+    audio = _read_video_audio(item["path"], first, frames, int(getattr(audio_vae, "audio_sample_rate", 32000)))
+    return _encode_av(vae, audio_vae, images, audio)
+
+
+def _shift_song(master_audio, frames: int):
+    """The song as heard on the plan timeline: ``frames`` of silence first (the song starts later)."""
+    if frames <= 0:
+        return master_audio
+    rate = int(master_audio["sample_rate"])
+    waveform = master_audio["waveform"]
+    pad = torch.zeros((*waveform.shape[:-1], int(round(frames / core.FPS * rate))), dtype=waveform.dtype)
+    return {"waveform": torch.cat([pad, waveform], dim=-1), "sample_rate": rate}
 
 
 # --------------------------------------------------------------------------- nodes
@@ -467,6 +607,52 @@ class H3PlanVoice:
         return (_add_to_bank(references, name, "voice", sample, "H3 Plan - Voice"),)
 
 
+class H3PlanVideo:
+    """A video file and the name the plan uses for it (start_video). Chain it with the reference nodes."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        files = _input_files(VIDEO_EXTENSIONS) or [NO_VIDEO]
+        return {
+            "required": {
+                "name": ("STRING", {"default": "", "tooltip": "Reference name used in the plan, for example 'intro'."}),
+                "video_file": (files, {"tooltip": "Video file from ComfyUI's input folder."}),
+            },
+            "optional": {
+                "references": ("H3_PLAN_REFS", {"tooltip": "Other references to pass along."}),
+            },
+        }
+
+    RETURN_TYPES = ("H3_PLAN_REFS",)
+    RETURN_NAMES = ("references",)
+    FUNCTION = "add"
+    CATEGORY = CATEGORY
+    DESCRIPTION = ("Gives a name to a video, for a plan that continues an existing video ('start_video'). Only the "
+                   "segment the plan names is read, at 24 fps, resized to cover the picture size and cropped in the "
+                   "middle. Needs ffmpeg (brought by ComfyUI-VideoHelperSuite).")
+
+    @classmethod
+    def IS_CHANGED(cls, name, video_file, references=None):
+        try:
+            path = folder_paths.get_annotated_filepath(video_file)
+            return f"{name}|{video_file}|{_mtime(path)}|{os.path.getsize(path)}"
+        except Exception:  # noqa: BLE001
+            return float("nan")
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, name, video_file):
+        if not str(name).strip():
+            return "H3 Plan - Video: give this video a name (the one used in the plan)"
+        if not video_file or video_file == NO_VIDEO or not folder_paths.exists_annotated_filepath(video_file):
+            return f"H3 Plan - Video '{name}': video file not found: {video_file!r}"
+        return True
+
+    def add(self, name, video_file, references=None):
+        path = folder_paths.get_annotated_filepath(video_file)
+        item = {"path": path, "digest": _file_digest(path)}
+        return (_add_to_bank(references, name, "video", item, "H3 Plan - Video"),)
+
+
 class H3PlanClip:
     """Prepare one clip of the plan: conditioning and a latent ready to sample."""
 
@@ -519,7 +705,7 @@ class H3PlanClip:
             plan = core.parse_plan(open(path, "r", encoding="utf-8-sig").read())
             entry, _row = _clip_entry(plan, clip_index)
             stamp = [core.clip_fingerprint(plan, entry["index"]), width, height]
-            if entry["continue"]:
+            if entry["continue"] and entry["index"] > 1:
                 stamp.append(_resolve(plan)[entry["index"] - 1]["chosen"])
             return json.dumps(stamp)
         except Exception:  # noqa: BLE001 - let prepare() report the real error
@@ -556,8 +742,13 @@ class H3PlanClip:
             )
         has_image = {name for name, item in bank.items() if item["image"] is not None}
         has_voice = {name for name, item in bank.items() if item["voice"] is not None}
+        edit = plan.get("edit_video") if core.edit_slice(plan, index) else None   # after the segment: no video
+        edit_item, edit_sound = None, False
+        if edit:
+            edit_item = _edit_video_file(plan, bank)
+            edit_sound = _video_has_sound(edit_item["path"])    # its sound is <Audio 1>, before the voices
         prompt, image_names, voice_names, notes = core.resolve_prompt(
-            entry["prompt"], entry["refs"], has_image, has_voice, use_voices=free,
+            entry["prompt"], entry["refs"], has_image, has_voice, use_voices=free, audio_offset=1 if edit_sound else 0,
         )
         if len(image_names) > core.MAX_REFS:
             raise ValueError(f"H3 Clip Plan: clip {index} uses {len(image_names)} images; MiniMax H3 accepts {core.MAX_REFS}")
@@ -572,20 +763,37 @@ class H3PlanClip:
             if master_audio is None:
                 raise ValueError("H3 Clip Plan: this plan is in music_video mode; connect the song to 'master_audio'")
             duration = int(master_audio["waveform"].shape[-1]) / int(master_audio["sample_rate"])
-            if row["end_seconds"] > duration + 1.0 / core.FPS:
+            offset = core.song_offset(plan)
+            if row["end_seconds"] - offset / core.FPS > duration + 1.0 / core.FPS:
                 raise ValueError(
-                    f"H3 Clip Plan: clip {index} ends at {row['end_seconds']:.3f} s but the song lasts {duration:.3f} s"
+                    f"H3 Clip Plan: clip {index} ends at {row['end_seconds'] - offset / core.FPS:.3f} s of the song "
+                    f"but the song lasts {duration:.3f} s"
                 )
+            master_audio = _shift_song(master_audio, offset)
         elif master_audio is not None:
             notes.append("master_audio ignored (free mode)")
 
+        ref_video = ref_video_audio = None
+        if edit:
+            first, count = core.edit_slice(plan, index)
+            ref_video = _read_video_frames(edit_item["path"], first, count, int(width), int(height))
+            if edit_sound:
+                ref_video_audio = _read_video_audio(edit_item["path"], first, count,
+                                                    int(getattr(audio_vae, "audio_sample_rate", 32000)))
+            notes.append(f"edits {first / core.FPS:.3f}-{(first + count) / core.FPS:.3f} s of the video '{edit['ref']}'"
+                         + (" (with its sound)" if edit_sound else " (it has no sound)"))
         positive, latent = _encode(
             clip, vae, audio_vae, prompt, int(width), int(height), entry["frames"],
             [bank[name]["image"] for name in image_names], plan["ref_image_size"], voices,
+            ref_video=ref_video, ref_video_audio=ref_video_audio,
         )
+        del ref_video
 
         parent = None
-        if entry["continue"] and str(parent_token).strip():
+        from_video = index == 1 and entry["continue"] and plan["start_video"] is not None
+        if from_video:
+            pass   # clip 1 continues the start video, not a take
+        elif entry["continue"] and str(parent_token).strip():
             token = str(parent_token).strip()
             states = _resolve(plan)[index - 1]["takes"]
             matches = [tid for tid in states if tid == token or tid.endswith("_" + token)]
@@ -605,6 +813,8 @@ class H3PlanClip:
                     f"{index - 1} first (or choose one of its takes in 'H3 Plan - Takes')"
                 )
         source = _load_take(plan, index - 1, parent) if parent else None
+        if from_video:
+            source = _start_video_source(plan, bank, vae, audio_vae, int(width), int(height))
         if source is not None:
             video, audio = source["samples"]
             source = {"samples": [video.to(torch.float32), audio.to(torch.float32)]}
@@ -655,7 +865,7 @@ class H3PlanClip:
         info = (
             f"clip {index}/{len(plan['clips'])} '{entry['name']}' ({plan['mode']}): {entry['frames']} frames, "
             f"{int(width)}x{int(height)}, {timing}, shown from {row['visible_seconds']:.3f} s, "
-            f"{'continues clip %d' % (index - 1) if entry['continue'] else 'new scene'}, "
+            f"{('continues the start video' if index == 1 else 'continues clip %d' % (index - 1)) if entry['continue'] else 'new scene'}, "
             f"images: {', '.join(image_names) or 'none'}, voices: {', '.join(voice_names) or 'none'}, "
             f"take {take_id}" + (f" (continues take {parent} of clip {index - 1})" if parent else "")
         )
@@ -669,6 +879,11 @@ class H3PlanClip:
                 "image": _digest(item["image"]) if item["image"] is not None else None,
                 "voice": _digest(item["voice"]) if (free and item["voice"] is not None) else None,
             }
+        if from_video:
+            ref = plan["start_video"]["ref"]
+            signature.setdefault(ref, {"image": None, "voice": None})["video"] = _start_video_file(plan, bank)["digest"]
+        if edit:
+            signature.setdefault(edit["ref"], {"image": None, "voice": None})["video"] = edit_item["digest"]
         plan_clip = {"plan_file": str(plan_file), "clip_index": index, "refs": signature, "take_id": take_id,
                      "seed": seed, "width": int(width), "height": int(height), "parent": parent}
         return (positive, prepared, clip_audio, seed, prefix, plan_clip, info)
@@ -786,7 +1001,7 @@ def _why_unusable(resolved, index):
     return "only stale takes (" + "; ".join(sorted({why for _s, why in takes.values()})) + ")"
 
 
-def _free_soundtrack(plan, count, latents, audio_vae):
+def _free_soundtrack(plan, count, latents, audio_vae, start_audio=None):
     """Rebuild the sound track of a free-mode plan from the sound generated with each clip.
 
     The picture assembler keeps, for each clip after the first, only what comes after its
@@ -810,13 +1025,19 @@ def _free_soundtrack(plan, count, latents, audio_vae):
         start = int(round(row["raw_start"] / core.FPS * rate))
         end = int(round(row["end"] / core.FPS * rate))
         waveform = _fit_length(waveform, end - start)
-        if row["index"] > 1 and not row["continue"]:
+        if row["index"] == 1 and start_audio is not None:
+            # the start video's own sound under the segment (read at this rate), then the clips over it
+            sound = start_audio(rate)["waveform"]
+            span = min(int(sound.shape[-1]), int(buffer.shape[-1]))
+            buffer[..., :span] = sound[..., :span]
+        if row["context"] and not row["continue"]:
             skip = int(round(row["visible"] / core.FPS * rate)) - start
             buffer[..., start + skip:end] = waveform[..., skip:]
         else:
             buffer[..., start:end] = waveform
         del waveform
-    return {"waveform": buffer, "sample_rate": rate}
+    first = int(round(core.final_start(plan) / core.FPS * rate))
+    return {"waveform": buffer[..., first:].contiguous(), "sample_rate": rate}
 
 
 class H3PlanAssemble:
@@ -834,7 +1055,13 @@ class H3PlanAssemble:
             },
             "optional": {
                 "master_audio": ("AUDIO", {"tooltip": "music_video mode: the complete song; it becomes the soundtrack untouched."}),
-                "audio_vae": ("VAE", {"tooltip": "free mode: MiniMax H3 audio VAE, to decode the sound of every clip."}),
+                "audio_vae": ("VAE", {"tooltip": "free mode: MiniMax H3 audio VAE, to decode the sound of every clip. "
+                                                 "Also needed to put a start video in the final video."}),
+                "references": ("H3_PLAN_REFS", {"tooltip": "Only for a plan with a start video or an edited video: the "
+                                                          "'H3 Plan - Video' node (and the others), to put the segment at the start "
+                                                          "of the video, or to keep the edited video's original sound."}),
+                "width": ("INT", {"forceInput": True, "tooltip": "Picture width of the clips (start video only)."}),
+                "height": ("INT", {"forceInput": True, "tooltip": "Picture height of the clips (start video only)."}),
             },
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "unique_id": "UNIQUE_ID"},
         }
@@ -864,7 +1091,7 @@ class H3PlanAssemble:
             return float("nan")
 
     def assemble(self, video_vae, plan_file, last_clip=0, crf=19, master_audio=None, audio_vae=None,
-                 prompt=None, extra_pnginfo=None, unique_id=None):
+                 references=None, width=None, height=None, prompt=None, extra_pnginfo=None, unique_id=None):
         plan, _path = _read_plan(plan_file)
         wanted = len(plan["clips"]) if int(last_clip) <= 0 else min(len(plan["clips"]), int(last_clip))
         resolved = _resolve(plan)
@@ -878,25 +1105,66 @@ class H3PlanAssemble:
         _LOG.info("H3 Clip Plan: %s", "; ".join(report))
         latents = {f"clip_{i}": _load_take(plan, i, resolved[i]["chosen"]) for i in range(1, count + 1)}
 
+        spec = plan["start_video"]
+        pieces, start_audio = [], None
+        if spec and spec["in_assembly"]:
+            pieces, start_audio = self._start_pieces(plan, references, video_vae, audio_vae, latents, width, height)
+            report.append(f"starts with {spec['frames'] / core.FPS:.2f} s of the video '{spec['ref']}' "
+                          f"({len(pieces)} piece(s))")
+        end_frame = core.timeline(plan)[count - 1]["end"]
+        first_frame = core.final_start(plan)
+
         if plan["mode"] == "free":
             if audio_vae is None:
                 raise ValueError("H3 Clip Plan: this plan is in free mode; connect the H3 audio VAE to 'audio_vae'")
-            audio = _free_soundtrack(plan, count, latents, audio_vae)
+            audio = _free_soundtrack(plan, count, latents, audio_vae, start_audio)
+            edit = plan.get("edit_video")
+            edited = core.edit_clip_count(plan) if edit else 0
+            if edit and edit["sound"] == "original" and edited:
+                # the edited part keeps the sound of the segment, untouched; the clips after it keep their own
+                item = _edit_video_file(plan, {name: _bank_entry(references, name) for name in (references or {})})
+                rate = int(audio["sample_rate"])
+                edit_end = min(core.timeline(plan)[edited - 1]["end"], end_frame)
+                if edit_end > first_frame:
+                    own = _read_video_audio(item["path"], edit["start_frame"] + first_frame, edit_end - first_frame, rate)
+                    waveform = own["waveform"].to(audio["waveform"].dtype)
+                    if waveform.shape[1] != audio["waveform"].shape[1]:
+                        waveform = waveform.mean(dim=1, keepdim=True).repeat(1, audio["waveform"].shape[1], 1)
+                    total = int(audio["waveform"].shape[-1])
+                    span = min(total, int(round((edit_end - first_frame) * total / max(1, end_frame - first_frame))))
+                    merged = audio["waveform"].clone()
+                    merged[..., :span] = _fit_length(waveform, span)
+                    audio = {"waveform": merged, "sample_rate": rate}
+                    report.append(f"sound: the original sound of the video '{edit['ref']}'"
+                                  + (f" until {edit_end / core.FPS:.2f} s, then the generated sound" if edited < count else ""))
         else:
             if master_audio is None:
                 raise ValueError("H3 Clip Plan: this plan is in music_video mode; connect the song to 'master_audio'")
-            # Cut the song to the length of the assembled picture (useful for a partial assembly).
-            end_frame = core.timeline(plan)[count - 1]["end"]
-            sample_rate = int(master_audio["sample_rate"])
+            # The song on the plan timeline, cut to the assembled picture (useful for a partial assembly).
+            song = _shift_song(master_audio, core.song_offset(plan))
+            sample_rate = int(song["sample_rate"])
+            first = int(round(first_frame / core.FPS * sample_rate))
             samples = int(round(end_frame / core.FPS * sample_rate))
-            audio = {"waveform": master_audio["waveform"][..., :samples], "sample_rate": sample_rate}
+            waveform = _fit_length(song["waveform"][..., first:samples].clone(), samples - first)
+            if start_audio is not None and spec["song"] == "after_video":
+                # 'after_video': the segment keeps its own sound, the song starts with clip 1
+                own = start_audio(sample_rate)["waveform"].to(waveform.dtype)   # [1, 2, samples]
+                if waveform.shape[1] != own.shape[1]:
+                    own = own.mean(dim=1, keepdim=True).repeat(1, waveform.shape[1], 1)
+                span = min(int(own.shape[-1]), int(waveform.shape[-1]))
+                waveform[..., :span] = own[..., :span]
+            audio = {"waveform": waveform, "sample_rate": sample_rate}
+
+        if pieces:
+            clips = [latents[f"clip_{i}"] for i in range(1, count + 1)]
+            latents = {f"clip_{n}": latent for n, latent in enumerate(pieces + clips, start=1)}
 
         stream_cls = _node_class("MiniMaxH3StreamLiveMusicVideoToVHS", MULTIREF_HINT)
         suffix = "final" if count == len(plan["clips"]) else f"clips_001-{count:03d}"
         result = stream_cls().stream_to_vhs(
             video_vae=video_vae,
             master_audio=audio,
-            input_count=count,
+            input_count=len(latents),
             context_frames=plan["context_frames"],
             video_overlap_frames=plan["crossfade_frames"],
             filename_prefix=f"{OUTPUT_ROOT}/{plan['project']}/{plan['project']}_{suffix}",
@@ -920,6 +1188,29 @@ class H3PlanAssemble:
             return result
         values = tuple(result) if isinstance(result, (tuple, list)) else (result,)
         return (values[0] if values else [], text)
+
+    @staticmethod
+    def _start_pieces(plan, references, video_vae, audio_vae, latents, width, height):
+        """Latents of the start video segment, cut into pieces joined like clips, and a reader of its sound."""
+        spec = plan["start_video"]
+        item = _start_video_file(plan, references)
+        if audio_vae is None:
+            raise ValueError("H3 Clip Plan: to put the start video in the final video, connect the H3 audio VAE to 'audio_vae'")
+        if width is None or height is None:
+            video, _audio = latents["clip_1"]["samples"]
+            height, width = int(video.shape[-2]) * 16, int(video.shape[-1]) * 16
+        vae_sr = int(getattr(audio_vae, "audio_sample_rate", 32000))
+        pieces = []
+        for first, length in core.segment_chunks(spec["frames"], plan["context_frames"]):
+            images = _read_video_frames(item["path"], spec["start_frame"] + first, length, int(width), int(height))
+            sound = _read_video_audio(item["path"], spec["start_frame"] + first, length, vae_sr)
+            pieces.append(_encode_av(video_vae, audio_vae, images, sound))
+            del images
+
+        def start_audio(rate):
+            return _read_video_audio(item["path"], spec["start_frame"], spec["frames"], rate)
+
+        return pieces, start_audio
 
 
 class H3PlanTimeline:
@@ -1070,7 +1361,7 @@ class H3PlanTakes:
         return ("\n".join(lines),)
 
 
-APP_VERSION = "3.6"
+APP_VERSION = "3.11"
 
 
 def _delete_takes(plan_file, items):
@@ -1151,6 +1442,7 @@ _register_routes()
 NODE_CLASS_MAPPINGS = {
     "H3PlanReference": H3PlanReference,
     "H3PlanVoice": H3PlanVoice,
+    "H3PlanVideo": H3PlanVideo,
     "H3PlanClip": H3PlanClip,
     "H3PlanSaveLatent": H3PlanSaveLatent,
     "H3PlanAssemble": H3PlanAssemble,
@@ -1160,6 +1452,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "H3PlanReference": "H3 Plan - Reference (named image)",
     "H3PlanVoice": "H3 Plan - Voice (named voice sample)",
+    "H3PlanVideo": "H3 Plan - Video (named video, start_video)",
     "H3PlanClip": "H3 Plan - Clip (prompt, refs, song slice)",
     "H3PlanSaveLatent": "H3 Plan - Save Clip Latent",
     "H3PlanAssemble": "H3 Plan - Assemble Final Video",
